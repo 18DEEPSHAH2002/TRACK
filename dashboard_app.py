@@ -40,9 +40,11 @@ def get_pending_tasks_overview(df):
     if df.empty:
         return pd.DataFrame({'Officer': ['N/A'], 'Pending Tasks': [0]})
     
-    # Check for required columns - ***UPDATE THESE IF YOUR COLUMN NAMES ARE DIFFERENT***
-    required_cols = ['officer', 'status']
+    # Updated required columns based on user input: 'officer name' and 'task status'
+    required_cols = ['officer name', 'task status']
     missing_cols = [col for col in required_cols if col not in df.columns]
+    officer_col = 'officer name'
+    status_col = 'task status'
 
     if missing_cols:
         # Display explicit error if columns are missing
@@ -53,8 +55,8 @@ def get_pending_tasks_overview(df):
         )
         return pd.DataFrame({'Officer': ['ERROR: Check Sheet Columns'], 'Pending Tasks': [0]})
 
-    # Use lowercase column names: 'officer' and 'status'
-    pending_df = df[df['status'].astype(str).str.lower().str.strip() == 'pending'].copy()
+    # Filter using 'task status' column
+    pending_df = df[df[status_col].astype(str).str.lower().str.strip() == 'pending'].copy()
 
     if pending_df.empty:
         return pd.DataFrame({
@@ -62,9 +64,9 @@ def get_pending_tasks_overview(df):
             'Pending Tasks': [0]
         })
 
-    # Group by Officer (using lowercase 'officer' column) and count pending tasks
-    summary = pending_df.groupby('officer').size().reset_index(name='Pending Tasks')
-    summary.rename(columns={'officer': 'Officer'}, inplace=True) # Rename back for display
+    # Group by 'officer name' column
+    summary = pending_df.groupby(officer_col).size().reset_index(name='Pending Tasks')
+    summary.rename(columns={officer_col: 'Officer'}, inplace=True) # Rename back for display
     summary = summary.sort_values(by='Pending Tasks', ascending=False)
 
     return summary
@@ -75,7 +77,7 @@ def get_upcoming_cases(df):
     if df.empty:
         return pd.DataFrame()
 
-    # Check for required column - ***UPDATE THIS IF YOUR COLUMN NAME IS DIFFERENT***
+    # Check for required column - ***'hearing date' is assumed correct, based on standard date naming***
     required_cols = ['hearing date']
     missing_cols = [col for col in required_cols if col not in df.columns]
 
@@ -129,9 +131,12 @@ def get_officer_performance(df):
     if df.empty:
         return pd.DataFrame({'Officer': ['N/A'], 'Completed (7 Days)': [0], 'Pending (Total)': [0]})
     
-    # Check for required columns - ***UPDATE THESE IF YOUR COLUMN NAMES ARE DIFFERENT***
-    required_cols = ['officer', 'status', 'completion date']
+    # Updated required columns based on user input: 'officer name' and 'task status'
+    required_cols = ['officer name', 'task status', 'completion date']
     missing_cols = [col for col in required_cols if col not in df.columns]
+    officer_col = 'officer name'
+    status_col = 'task status'
+    completion_date_col = 'completion date'
 
     if missing_cols:
         st.error(
@@ -143,11 +148,6 @@ def get_officer_performance(df):
 
     today = datetime.now().date()
     start_date_7_days = today - timedelta(days=7)
-
-    # Use lowercase column names: 'officer', 'status', 'completion date'
-    status_col = 'status'
-    officer_col = 'officer'
-    completion_date_col = 'completion date'
     
     # Ensure date columns are in datetime format
     try:
@@ -157,7 +157,7 @@ def get_officer_performance(df):
         df[completion_date_col] = pd.NaT
 
 
-    # 1. Completed in Last 7 Days
+    # 1. Completed in Last 7 Days (using 'task status' and 'completion date')
     completed_7_days = df[
         (df[status_col].astype(str).str.lower().str.strip() == 'complete') &
         (df[completion_date_col].dt.date >= start_date_7_days) &
@@ -165,7 +165,7 @@ def get_officer_performance(df):
     ]
     completed_counts = completed_7_days.groupby(officer_col).size().reset_index(name='Completed (7 Days)')
 
-    # 2. Total Pending Tasks
+    # 2. Total Pending Tasks (using 'task status')
     pending_tasks = df[df[status_col].astype(str).str.lower().str.strip() == 'pending']
     pending_counts = pending_tasks.groupby(officer_col).size().reset_index(name='Pending (Total)')
 
