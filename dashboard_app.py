@@ -94,7 +94,7 @@ def get_sheet_data(sheet_url):
         return None
 
 # Cache data loading
-@st.cache_data(ttl=300)  # Cache for 5 minutes
+@st.cache_data(ttl=300)
 def load_all_data():
     """Load all data from Google Sheets"""
     pending_tasks_url = "https://docs.google.com/spreadsheets/d/1jspebqSTXgEtYyxYAE47_uRn6RQKFlHQhneuQoGiCok/edit?gid=535674994#gid=535674994"
@@ -135,7 +135,7 @@ with col1:
                 remarks_cols = [col for col in available_cols if 'REMARKS' in col and 'MEETING' not in col]
                 
                 if remarks_cols:
-                    latest_remarks = remarks_cols[-1]  # Get the last remarks column
+                    latest_remarks = remarks_cols[-1]
                     
                     task_data = pending_df[[sr_col, 'SUBJECT', latest_remarks]].copy()
                     task_data = task_data.dropna(subset=[sr_col])
@@ -162,7 +162,7 @@ with col1:
 
 # ============= COLUMN 2: UPCOMING COURT CASES =============
 with col2:
-    st.markdown("<div class='header-text'>⚖️ Upcoming Court Cases (14 Days)</div>", unsafe_allow_html=True)
+    st.markdown("<div class='header-text'>⚖️ Upcoming Court Cases (Next 14 Days)</div>", unsafe_allow_html=True)
     
     if court_df is not None:
         try:
@@ -177,6 +177,8 @@ with col2:
                 date_col = 'NEXT HEARING DATE'
             elif 'Hearing Date' in available_cols:
                 date_col = 'Hearing Date'
+            elif 'HEARING DATE' in available_cols:
+                date_col = 'HEARING DATE'
             
             if date_col:
                 # Convert to datetime
@@ -186,14 +188,17 @@ with col2:
                 today = datetime.now().date()
                 next_14_days = today + timedelta(days=14)
                 
-                upcoming = court_df[
-                    (court_df[date_col].dt.date >= today) & 
-                    (court_df[date_col].dt.date <= next_14_days)
+                # Remove rows with NaT (invalid dates)
+                court_df_valid = court_df.dropna(subset=[date_col])
+                
+                upcoming = court_df_valid[
+                    (court_df_valid[date_col].dt.date >= today) & 
+                    (court_df_valid[date_col].dt.date <= next_14_days)
                 ].copy()
                 
                 if len(upcoming) > 0:
                     # Select relevant columns
-                    display_cols = ['CASE NO.', 'CASE TITLE', date_col, 'NAME OF COURT (SUPREME COURT / HIGH COURT / CIVIL COURT']
+                    display_cols = ['CASE NO.', 'CASE TITLE', date_col]
                     display_cols = [col for col in display_cols if col in available_cols]
                     
                     st.dataframe(
@@ -202,11 +207,11 @@ with col2:
                         height=300,
                         use_container_width=True
                     )
-                    st.metric("Upcoming Cases", len(upcoming))
+                    st.metric("Upcoming Cases (Next 14 Days)", len(upcoming))
                 else:
                     st.info("📅 No cases scheduled in next 14 days")
             else:
-                st.markdown("<div class='error-box'><strong>⚠️ Column Issue:</strong> Could not find date column. Looking for 'NEXT HEARING DATE' or similar.</div>", unsafe_allow_html=True)
+                st.markdown("<div class='error-box'><strong>⚠️ Column Issue:</strong> Could not find date column. Looking for 'NEXT HEARING DATE'.</div>", unsafe_allow_html=True)
                 st.info(f"Available columns: {', '.join(available_cols[:5])}...")
                 
         except Exception as e:
@@ -216,7 +221,7 @@ with col2:
 
 # ============= COLUMN 3: OFFICER PERFORMANCE (7 DAYS) =============
 with col3:
-    st.markdown("<div class='header-text'>⭐ Officer Task Status</div>", unsafe_allow_html=True)
+    st.markdown("<div class='header-text'>⭐ Officer Tasks Completed (Last 7 Days)</div>", unsafe_allow_html=True)
     
     if performance_df is not None:
         try:
@@ -227,31 +232,51 @@ with col3:
             
             # Use the actual columns from the performance sheet
             officer_col = None
+            entry_date_col = None
             status_col = None
             
             if 'MARKED TO OFFICER' in available_cols:
                 officer_col = 'MARKED TO OFFICER'
             
+            if 'ENTRY DATE' in available_cols:
+                entry_date_col = 'ENTRY DATE'
+            
             if 'STATUS' in available_cols:
                 status_col = 'STATUS'
             
-            if officer_col and status_col:
-                # Group by officer and count tasks by status
-                perf_summary = performance_df.groupby([officer_col, status_col]).size().reset_index(name='Count')
-                perf_summary = perf_summary.sort_values('Count', ascending=False)
+            if officer_col and entry_date_col and status_col:
+                # Convert entry date to datetime
+                performance_df[entry_date_col] = pd.to_datetime(performance_df[entry_date_col], errors='coerce')
                 
-                if len(perf_summary) > 0:
+                # Filter for last 7 days
+                today = datetime.now().date()
+                last_7_days = today - timedelta(days=7)
+                
+                # Filter for completed tasks in last 7 days
+                last_7_df = performance_df[
+                    (performance_df[entry_date_col].dt.date >= last_7_days) & 
+                    (performance_df[entry_date_col].dt.date <= today)
+                ].copy()
+                
+                # Filter for completed status
+                completed_tasks = last_7_df[last_7_df[status_col].str.lower().str.contains('complet|done|closed', na=False, case=False)].copy()
+                
+                if len(completed_tasks) > 0:
+                    # Group by officer and count completed tasks
+                    officer_summary = completed_tasks.groupby(officer_col).size().reset_index(name='Completed Tasks (7 Days)')
+                    officer_summary = officer_summary.sort_values('Completed Tasks (7 Days)', ascending=False)
+                    
                     st.dataframe(
-                        perf_summary.head(10),
+                        officer_summary.head(10),
                         hide_index=True,
                         height=300,
                         use_container_width=True
                     )
-                    st.metric("Total Tasks", len(performance_df))
+                    st.metric("Total Completed (7 Days)", len(completed_tasks))
                 else:
-                    st.info("No performance data available")
+                    st.info("No completed tasks in last 7 days")
             else:
-                st.markdown("<div class='error-box'><strong>⚠️ Column Issue:</strong> Looking for 'MARKED TO OFFICER' and 'STATUS' columns.</div>", unsafe_allow_html=True)
+                st.markdown("<div class='error-box'><strong>⚠️ Column Issue:</strong> Looking for 'MARKED TO OFFICER', 'ENTRY DATE', and 'STATUS' columns.</div>", unsafe_allow_html=True)
                 st.info(f"Available: {', '.join(available_cols[:5])}...")
                 
         except Exception as e:
