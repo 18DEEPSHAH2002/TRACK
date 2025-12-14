@@ -73,17 +73,19 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 # Function to fetch Google Sheets data via CSV export
-def get_sheet_data(sheet_url):
+def get_sheet_data(sheet_url, gid=None):
     """Convert Google Sheets URL to CSV export and fetch data"""
     try:
-        # Extract sheet ID and GID from URL
+        # Extract sheet ID from URL
         sheet_id = re.search(r'/d/([a-zA-Z0-9-_]+)', sheet_url)
-        gid = re.search(r'[#&]gid=([0-9]+)', sheet_url)
         
-        if sheet_id and gid:
+        if sheet_id:
             sheet_id = sheet_id.group(1)
-            gid = gid.group(1)
-            csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={gid}"
+            if gid:
+                csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={gid}"
+            else:
+                csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv"
+            
             df = pd.read_csv(csv_url)
             return df
         else:
@@ -97,18 +99,22 @@ def get_sheet_data(sheet_url):
 @st.cache_data(ttl=300)
 def load_all_data():
     """Load all data from Google Sheets"""
-    pending_tasks_url = "https://docs.google.com/spreadsheets/d/1jspebqSTXgEtYyxYAE47_uRn6RQKFlHQhneuQoGiCok/edit?gid=535674994#gid=535674994"
+    # CMFO Sheet with multiple tabs for different officers
+    cmfo_sheet_url = "https://docs.google.com/spreadsheets/d/1jspebqSTXgEtYyxYAE47_uRn6RQKFlHQhneuQoGiCok/edit"
+    
     court_cases_url = "https://docs.google.com/spreadsheets/d/1VUnD7ySFzIkeZlaq8E5XG8r2xXcos6lhIt62QZEeHKs/edit?gid=0#gid=0"
     officer_performance_url = "https://docs.google.com/spreadsheets/d/14-idXJHzHKCUQxxaqGZi-6S0G20gvPUhK4G16ci2FwI/edit?gid=213021534#gid=213021534"
     
-    pending_df = get_sheet_data(pending_tasks_url)
+    # Load CMFO main sheet (GID 0 is usually the first sheet)
+    cmfo_df = get_sheet_data(cmfo_sheet_url, gid=0)
+    
     court_df = get_sheet_data(court_cases_url)
     performance_df = get_sheet_data(officer_performance_url)
     
-    return pending_df, court_df, performance_df
+    return cmfo_df, court_df, performance_df
 
 # Load data
-pending_df, court_df, performance_df = load_all_data()
+cmfo_df, court_df, performance_df = load_all_data()
 
 # Dashboard Title
 st.markdown("<h1 style='text-align: center; margin: 0; padding: 0.5rem 0;'>📊 District Governance Dashboard</h1>", unsafe_allow_html=True)
@@ -116,49 +122,69 @@ st.markdown("<h1 style='text-align: center; margin: 0; padding: 0.5rem 0;'>📊 
 # Create three columns for main content
 col1, col2, col3 = st.columns([1, 1, 1], gap="small")
 
-# ============= COLUMN 1: PENDING TASKS =============
+# ============= COLUMN 1: OFFICER PENDING TASKS =============
 with col1:
-    st.markdown("<div class='header-text'>⏳ XEN Mining Tasks Overview</div>", unsafe_allow_html=True)
+    st.markdown("<div class='header-text'>⏳ Officers with Pending Tasks</div>", unsafe_allow_html=True)
     
-    if pending_df is not None:
+    if cmfo_df is not None:
         try:
             # Clean column names
-            pending_df.columns = pending_df.columns.str.strip()
+            cmfo_df.columns = cmfo_df.columns.str.strip()
             
-            # Display available columns for debugging
-            available_cols = list(pending_df.columns)
+            available_cols = list(cmfo_df.columns)
             
-            # For XEN Mining sheet: Use SR NO as identifier, REMARKS/SUBJECT as description
-            if 'XEN MINING SR NO' in available_cols:
-                sr_col = 'XEN MINING SR NO'
-                # Get the most recent remarks column
-                remarks_cols = [col for col in available_cols if 'REMARKS' in col and 'MEETING' not in col]
+            # Look for officer name and status columns
+            officer_col = None
+            status_col = None
+            
+            # Try different column name variations
+            for col in available_cols:
+                if 'officer' in col.lower() or 'cmfo' in col.lower() or 'name' in col.lower():
+                    officer_col = col
+                    break
+            
+            for col in available_cols:
+                if 'status' in col.lower():
+                    status_col = col
+                    break
+            
+            # If not found, check the first few columns
+            if not officer_col and len(available_cols) > 0:
+                officer_col = available_cols[0]
+            if not status_col and len(available_cols) > 1:
+                status_col = available_cols[-1]
+            
+            if officer_col and status_col:
+                # Clean the data
+                cmfo_clean = cmfo_df[[officer_col, status_col]].copy()
+                cmfo_clean = cmfo_clean.dropna(subset=[officer_col])
                 
-                if remarks_cols:
-                    latest_remarks = remarks_cols[-1]
+                # Count pending tasks (filter for non-completed statuses)
+                pending_mask = ~cmfo_clean[status_col].fillna('').str.lower().str.contains('complet|done|closed', na=False, case=False)
+                pending_tasks = cmfo_clean[pending_mask].copy()
+                
+                # Group by officer and count pending tasks
+                if len(pending_tasks) > 0:
+                    officer_pending = pending_tasks.groupby(officer_col).size().reset_index(name='Pending Tasks')
+                    officer_pending = officer_pending.sort_values('Pending Tasks', ascending=False)
                     
-                    task_data = pending_df[[sr_col, 'SUBJECT', latest_remarks]].copy()
-                    task_data = task_data.dropna(subset=[sr_col])
-                    
-                    if len(task_data) > 0:
-                        st.dataframe(
-                            task_data.head(10),
-                            hide_index=True,
-                            height=300,
-                            use_container_width=True
-                        )
-                        st.metric("Total Items", len(task_data))
-                    else:
-                        st.info("✅ No tasks available!")
+                    st.dataframe(
+                        officer_pending,
+                        hide_index=True,
+                        height=300,
+                        use_container_width=True
+                    )
+                    st.metric("Total Pending Tasks", len(pending_tasks))
                 else:
-                    st.warning("Could not find remarks columns")
+                    st.info("✅ No pending tasks!")
             else:
-                st.warning("Could not identify XEN Mining column")
+                st.markdown("<div class='error-box'><strong>⚠️ Could not identify columns:</strong><br>Officer Col: " + str(officer_col) + "<br>Status Col: " + str(status_col) + "</div>", unsafe_allow_html=True)
+                st.info(f"Available columns: {', '.join(available_cols[:10])}")
                 
         except Exception as e:
-            st.error(f"Error processing pending tasks: {str(e)}")
+            st.error(f"Error processing CMFO tasks: {str(e)}")
     else:
-        st.warning("Unable to load pending tasks data")
+        st.warning("Unable to load CMFO data")
 
 # ============= COLUMN 2: UPCOMING COURT CASES =============
 with col2:
