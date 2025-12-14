@@ -5,7 +5,6 @@ from google.auth.transport.requests import Request
 from google.oauth2.service_account import Credentials
 from datetime import datetime, timedelta
 import json
-from urllib.parse import urlparse
 import re
 
 # Page Config
