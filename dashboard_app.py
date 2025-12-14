@@ -40,14 +40,18 @@ def get_pending_tasks_overview(df):
     if df.empty:
         return pd.DataFrame({'Officer': ['N/A'], 'Pending Tasks': [0]})
     
-    # Check for required columns
+    # Check for required columns - ***UPDATE THESE IF YOUR COLUMN NAMES ARE DIFFERENT***
     required_cols = ['officer', 'status']
     missing_cols = [col for col in required_cols if col not in df.columns]
 
     if missing_cols:
         # Display explicit error if columns are missing
-        st.error(f"Missing required columns in Pending Tasks sheet: **{', '.join(missing_cols).upper()}**. Available columns: {', '.join(df.columns).upper()}")
-        return pd.DataFrame({'Officer': ['ERROR'], 'Pending Tasks': [0]})
+        st.error(
+            f"❌ **Error: Missing Columns in Pending Tasks Sheet** (GID: 535674994)\n\n"
+            f"The following required columns were not found: **{', '.join(missing_cols).upper()}**.\n\n"
+            f"**Available Columns:** {', '.join(df.columns).upper()}"
+        )
+        return pd.DataFrame({'Officer': ['ERROR: Check Sheet Columns'], 'Pending Tasks': [0]})
 
     # Use lowercase column names: 'officer' and 'status'
     pending_df = df[df['status'].astype(str).str.lower().str.strip() == 'pending'].copy()
@@ -71,12 +75,16 @@ def get_upcoming_cases(df):
     if df.empty:
         return pd.DataFrame()
 
-    # Check for required column
+    # Check for required column - ***UPDATE THIS IF YOUR COLUMN NAME IS DIFFERENT***
     required_cols = ['hearing date']
     missing_cols = [col for col in required_cols if col not in df.columns]
 
     if missing_cols:
-        st.error(f"Missing required columns in Court Cases sheet: **{', '.join(missing_cols).upper()}**. Available columns: {', '.join(df.columns).upper()}")
+        st.error(
+            f"❌ **Error: Missing Columns in Court Cases Sheet** (GID: 0)\n\n"
+            f"The following required columns were not found: **{', '.join(missing_cols).upper()}**.\n\n"
+            f"**Available Columns:** {', '.join(df.columns).upper()}"
+        )
         return pd.DataFrame()
 
     today = datetime.now().date()
@@ -121,13 +129,17 @@ def get_officer_performance(df):
     if df.empty:
         return pd.DataFrame({'Officer': ['N/A'], 'Completed (7 Days)': [0], 'Pending (Total)': [0]})
     
-    # Check for required columns
+    # Check for required columns - ***UPDATE THESE IF YOUR COLUMN NAMES ARE DIFFERENT***
     required_cols = ['officer', 'status', 'completion date']
     missing_cols = [col for col in required_cols if col not in df.columns]
 
     if missing_cols:
-        st.error(f"Missing required columns in Performance sheet: **{', '.join(missing_cols).upper()}**. Available columns: {', '.join(df.columns).upper()}")
-        return pd.DataFrame({'Officer': ['ERROR'], 'Completed (7 Days)': [0], 'Pending (Total)': [0]})
+        st.error(
+            f"❌ **Error: Missing Columns in Performance Sheet** (GID: 213021534)\n\n"
+            f"The following required columns were not found: **{', '.join(missing_cols).upper()}**.\n\n"
+            f"**Available Columns:** {', '.join(df.columns).upper()}"
+        )
+        return pd.DataFrame({'Officer': ['ERROR: Check Sheet Columns'], 'Completed (7 Days)': [0], 'Pending (Total)': [0]})
 
     today = datetime.now().date()
     start_date_7_days = today - timedelta(days=7)
@@ -225,12 +237,12 @@ def main_dashboard():
         pending_summary = get_pending_tasks_overview(df_pending)
 
         # Display key metric (Total Pending)
-        total_pending = pending_summary['Pending Tasks'].sum()
+        total_pending = pending_summary['Pending Tasks'].sum() if 'Pending Tasks' in pending_summary.columns else 0
         st.metric(label="Total Pending Tasks Across All Officers", value=f"{total_pending}", delta_color="inverse")
         st.markdown("**List of Officers with Pending Tasks:**")
 
         # Check if the dataframe contains the required 'Officer' column after processing
-        if 'Officer' in pending_summary.columns and total_pending > 0:
+        if 'Officer' in pending_summary.columns and 'Pending Tasks' in pending_summary.columns and total_pending > 0:
             st.dataframe(
                 pending_summary,
                 use_container_width=True,
@@ -244,7 +256,7 @@ def main_dashboard():
             st.info("🎉 Great job! No pending tasks found.")
         else:
             # Error was likely displayed by the function itself
-            st.warning("Data load/processing failed for Pending Tasks. See error above.")
+            st.warning("Data load/processing failed for Pending Tasks. Check Sheet Columns error above.")
 
 
     # --- BOX 2: Upcoming Court Cases (Next 14 Days) ---
@@ -269,11 +281,12 @@ def main_dashboard():
                     }
                 )
             else:
+                 # This branch is hit if the data loaded but date filtering resulted in 0 cases or column rename failed.
                  st.info("No court cases scheduled in the next 14 days, or column names are unexpected.")
         elif num_cases == 0 and not upcoming_cases_df.empty:
             st.info("No court cases scheduled in the next 14 days.")
         else:
-            st.warning("Data load/processing failed for Court Cases. See error above.")
+            st.warning("Data load/processing failed for Court Cases. Check Sheet Columns error above.")
 
 
     # --- BOX 3: Officer Performance (Star Mark Box) ---
@@ -282,7 +295,7 @@ def main_dashboard():
         performance_df = get_officer_performance(df_performance_data)
 
         # Display key metric (Total Completed)
-        total_completed = performance_df['Completed (7 Days)'].sum()
+        total_completed = performance_df['Completed (7 Days)'].sum() if 'Completed (7 Days)' in performance_df.columns else 0
         st.metric(label="Total Tasks Completed (Last 7 Days)", value=f"{total_completed}", delta_color="normal")
         st.markdown("**Performance Metrics:**")
 
@@ -299,7 +312,7 @@ def main_dashboard():
                 }
             )
         else:
-            st.warning("Data load/processing failed for Officer Performance. See error above.")
+            st.warning("Data load/processing failed for Officer Performance. Check Sheet Columns error above.")
 
 
 if __name__ == "__main__":
