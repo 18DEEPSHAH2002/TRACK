@@ -39,6 +39,15 @@ def get_pending_tasks_overview(df):
     """Calculates pending tasks per officer."""
     if df.empty:
         return pd.DataFrame({'Officer': ['N/A'], 'Pending Tasks': [0]})
+    
+    # Check for required columns
+    required_cols = ['officer', 'status']
+    missing_cols = [col for col in required_cols if col not in df.columns]
+
+    if missing_cols:
+        # Display explicit error if columns are missing
+        st.error(f"Missing required columns in Pending Tasks sheet: **{', '.join(missing_cols).upper()}**. Available columns: {', '.join(df.columns).upper()}")
+        return pd.DataFrame({'Officer': ['ERROR'], 'Pending Tasks': [0]})
 
     # Use lowercase column names: 'officer' and 'status'
     pending_df = df[df['status'].astype(str).str.lower().str.strip() == 'pending'].copy()
@@ -62,6 +71,14 @@ def get_upcoming_cases(df):
     if df.empty:
         return pd.DataFrame()
 
+    # Check for required column
+    required_cols = ['hearing date']
+    missing_cols = [col for col in required_cols if col not in df.columns]
+
+    if missing_cols:
+        st.error(f"Missing required columns in Court Cases sheet: **{', '.join(missing_cols).upper()}**. Available columns: {', '.join(df.columns).upper()}")
+        return pd.DataFrame()
+
     today = datetime.now().date()
     end_date = today + timedelta(days=14)
 
@@ -69,9 +86,8 @@ def get_upcoming_cases(df):
     try:
         # Assuming the sheet uses 'Hearing Date' or similar, which is now 'hearing date'
         df['hearing date'] = pd.to_datetime(df['hearing date'], errors='coerce', dayfirst=True)
-    except Exception:
-        # Fallback if 'hearing date' is not available
-        st.warning("Could not parse 'hearing date' column. Please check the date format in the sheet.")
+    except Exception as e:
+        st.warning(f"Could not parse 'hearing date' column due to format issues: {e}. Please check the date format in the sheet.")
         return pd.DataFrame()
 
     # Filter for upcoming cases (from today up to the next 14 days)
@@ -104,22 +120,30 @@ def get_officer_performance(df):
     """Calculates completed and pending tasks for performance dashboard."""
     if df.empty:
         return pd.DataFrame({'Officer': ['N/A'], 'Completed (7 Days)': [0], 'Pending (Total)': [0]})
+    
+    # Check for required columns
+    required_cols = ['officer', 'status', 'completion date']
+    missing_cols = [col for col in required_cols if col not in df.columns]
+
+    if missing_cols:
+        st.error(f"Missing required columns in Performance sheet: **{', '.join(missing_cols).upper()}**. Available columns: {', '.join(df.columns).upper()}")
+        return pd.DataFrame({'Officer': ['ERROR'], 'Completed (7 Days)': [0], 'Pending (Total)': [0]})
 
     today = datetime.now().date()
     start_date_7_days = today - timedelta(days=7)
 
-    # Ensure date columns are in datetime format
-    try:
-        # Assuming the sheet uses 'Completion Date' or similar, which is now 'completion date'
-        df['completion date'] = pd.to_datetime(df['completion date'], errors='coerce', dayfirst=True)
-    except Exception:
-        st.warning("Could not parse 'completion date' column. Performance metrics for 7 days may be inaccurate.")
-        df['completion date'] = pd.NaT
-
-    # Use lowercase column names: 'officer', 'status'
+    # Use lowercase column names: 'officer', 'status', 'completion date'
     status_col = 'status'
     officer_col = 'officer'
     completion_date_col = 'completion date'
+    
+    # Ensure date columns are in datetime format
+    try:
+        df[completion_date_col] = pd.to_datetime(df[completion_date_col], errors='coerce', dayfirst=True)
+    except Exception as e:
+        st.warning(f"Could not parse 'completion date' column due to format issues: {e}. Performance metrics for 7 days may be inaccurate.")
+        df[completion_date_col] = pd.NaT
+
 
     # 1. Completed in Last 7 Days
     completed_7_days = df[
@@ -206,7 +230,7 @@ def main_dashboard():
         st.markdown("**List of Officers with Pending Tasks:**")
 
         # Check if the dataframe contains the required 'Officer' column after processing
-        if 'Officer' in pending_summary.columns and pending_summary['Pending Tasks'].sum() > 0:
+        if 'Officer' in pending_summary.columns and total_pending > 0:
             st.dataframe(
                 pending_summary,
                 use_container_width=True,
@@ -216,8 +240,12 @@ def main_dashboard():
                     "Pending Tasks": st.column_config.NumberColumn("Pending Tasks", help="Number of tasks with status 'Pending'", format="%d")
                 }
             )
+        elif total_pending == 0 and 'Officer' in pending_summary.columns:
+            st.info("🎉 Great job! No pending tasks found.")
         else:
-            st.info("🎉 Great job! No pending tasks found or data failed to load.")
+            # Error was likely displayed by the function itself
+            st.warning("Data load/processing failed for Pending Tasks. See error above.")
+
 
     # --- BOX 2: Upcoming Court Cases (Next 14 Days) ---
     with col_court:
@@ -242,8 +270,10 @@ def main_dashboard():
                 )
             else:
                  st.info("No court cases scheduled in the next 14 days, or column names are unexpected.")
-        else:
+        elif num_cases == 0 and not upcoming_cases_df.empty:
             st.info("No court cases scheduled in the next 14 days.")
+        else:
+            st.warning("Data load/processing failed for Court Cases. See error above.")
 
 
     # --- BOX 3: Officer Performance (Star Mark Box) ---
@@ -257,7 +287,7 @@ def main_dashboard():
         st.markdown("**Performance Metrics:**")
 
         # Check if the dataframe contains the required 'Officer' column after processing
-        if 'Officer' in performance_df.columns:
+        if 'Officer' in performance_df.columns and not performance_df.empty:
             st.dataframe(
                 performance_df,
                 use_container_width=True,
@@ -269,7 +299,7 @@ def main_dashboard():
                 }
             )
         else:
-            st.warning("Could not calculate performance data. Check sheet columns for 'Officer', 'Status', and 'Completion Date'.")
+            st.warning("Data load/processing failed for Officer Performance. See error above.")
 
 
 if __name__ == "__main__":
