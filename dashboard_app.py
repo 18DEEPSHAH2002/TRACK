@@ -1,252 +1,276 @@
 import streamlit as st
 import pandas as pd
-import gspread
 from datetime import datetime, timedelta
-import json
-import re
 
-# Page Config
-st.set_page_config(page_title="District Dashboard", layout="wide", initial_sidebar_state="collapsed")
+# --- Configuration ---
+st.set_page_config(
+    page_title="Executive Overview Dashboard",
+    layout="wide",
+    initial_sidebar_state="collapsed"
+)
 
-# Custom CSS for compact layout
-st.markdown("""
-    <style>
-    /* Remove default padding and margins */
-    .main {
-        padding-top: 0.5rem;
-        padding-left: 1rem;
-        padding-right: 1rem;
-    }
-    
-    /* Compact headers */
-    h1, h2, h3 {
-        margin: 0;
-        padding: 0.25rem 0;
-    }
-    
-    /* Compact spacing for metric containers */
-    [data-testid="metric-container"] {
-        margin: 0 !important;
-        padding: 0.5rem !important;
-    }
-    
-    /* Compact dataframe styling */
-    .dataframe {
-        font-size: 12px;
-    }
-    
-    /* Custom card styling */
-    .dashboard-card {
-        padding: 0.75rem;
-        border-radius: 8px;
-        border: 1px solid #e0e0e0;
-        background-color: #f8f9fa;
-    }
-    
-    .header-text {
-        font-size: 14px;
-        font-weight: 600;
-        margin: 0.25rem 0;
-    }
-    
-    .metric-text {
-        font-size: 13px;
-        margin: 0.1rem 0;
-    }
-    </style>
-    """, unsafe_allow_html=True)
+# --- Google Sheets Export URLs (Converted for CSV access) ---
+# NOTE: These URLs assume the sheets are publicly viewable.
+# If loading fails, ensure the sharing settings are "Anyone with the link can view."
+URL_PENDING = "https://docs.google.com/spreadsheets/d/1jspebqSTXgEtYyxYAE47_uRn6RQKFlHQhneuQoGiCok/gviz/tq?tqx=out:csv&gid=535674994"
+URL_COURT_CASES = "https://docs.google.com/spreadsheets/d/1VUnD7ySFzIkeZlaq8E5XG8r2xXcos6lhIt62QZEeHKs/gviz/tq?tqx=out:csv&gid=0"
+URL_PERFORMANCE = "https://docs.google.com/spreadsheets/d/14-idXJHzHKCUQxxaqGZi-6S0G20gvPUhK4G16ci2FwI/gviz/tq?tqx=out:csv&gid=213021534"
 
-# Function to fetch Google Sheets data via CSV export
-def get_sheet_data(sheet_url):
-    """Convert Google Sheets URL to CSV export and fetch data"""
+# --- Data Loading Function with Caching ---
+@st.cache_data(ttl=600) # Cache data for 10 minutes
+def load_data(url):
+    """
+    Loads data from a Google Sheet CSV export URL.
+    Converts column names to lowercase and strips whitespace for robust access.
+    """
     try:
-        # Extract sheet ID and GID from URL
-        sheet_id = re.search(r'/d/([a-zA-Z0-9-_]+)', sheet_url)
-        gid = re.search(r'[#&]gid=([0-9]+)', sheet_url)
-        
-        if sheet_id and gid:
-            sheet_id = sheet_id.group(1)
-            gid = gid.group(1)
-            csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={gid}"
-            df = pd.read_csv(csv_url)
-            return df
-        else:
-            st.error("Could not parse Google Sheets URL")
-            return None
+        df = pd.read_csv(url)
+        # 1. Clean column names by stripping whitespace
+        df.columns = df.columns.str.strip()
+        # 2. Convert column names to lowercase for robust key access in all functions
+        df.columns = df.columns.str.lower()
+        return df
     except Exception as e:
-        st.error(f"Error fetching sheet: {str(e)}")
-        return None
+        st.error(f"Error loading data from sheet ({url[-10:]}): {e}. Please ensure the sheet is publicly accessible.")
+        return pd.DataFrame()
 
-# Cache data loading
-@st.cache_data(ttl=300)  # Cache for 5 minutes
-def load_all_data():
-    """Load all data from Google Sheets"""
-    pending_tasks_url = "https://docs.google.com/spreadsheets/d/1jspebqSTXgEtYyxYAE47_uRn6RQKFlHQhneuQoGiCok/edit?gid=535674994#gid=535674994"
-    court_cases_url = "https://docs.google.com/spreadsheets/d/1VUnD7ySFzIkeZlaq8E5XG8r2xXcos6lhIt62QZEeHKs/edit?gid=0#gid=0"
-    officer_performance_url = "https://docs.google.com/spreadsheets/d/14-idXJHzHKCUQxxaqGZi-6S0G20gvPUhK4G16ci2FwI/edit?gid=213021534#gid=213021534"
-    
-    pending_df = get_sheet_data(pending_tasks_url)
-    court_df = get_sheet_data(court_cases_url)
-    performance_df = get_sheet_data(officer_performance_url)
-    
-    return pending_df, court_df, performance_df
+# --- 1. Pending Tasks Overview ---
+def get_pending_tasks_overview(df):
+    """Calculates pending tasks per officer."""
+    if df.empty:
+        return pd.DataFrame({'Officer': ['N/A'], 'Pending Tasks': [0]})
 
-# Load data
-pending_df, court_df, performance_df = load_all_data()
+    # Use lowercase column names: 'officer' and 'status'
+    pending_df = df[df['status'].astype(str).str.lower().str.strip() == 'pending'].copy()
 
-# Dashboard Title
-st.markdown("<h1 style='text-align: center; margin: 0; padding: 0.5rem 0;'>📊 District Governance Dashboard</h1>", unsafe_allow_html=True)
+    if pending_df.empty:
+        return pd.DataFrame({
+            'Officer': ['None'],
+            'Pending Tasks': [0]
+        })
 
-# Create three columns for main content
-col1, col2, col3 = st.columns([1, 1, 1], gap="small")
+    # Group by Officer (using lowercase 'officer' column) and count pending tasks
+    summary = pending_df.groupby('officer').size().reset_index(name='Pending Tasks')
+    summary.rename(columns={'officer': 'Officer'}, inplace=True) # Rename back for display
+    summary = summary.sort_values(by='Pending Tasks', ascending=False)
 
-# ============= COLUMN 1: PENDING TASKS =============
-with col1:
-    st.markdown("<div class='header-text'>⏳ Officers with Pending Tasks</div>", unsafe_allow_html=True)
-    
-    if pending_df is not None:
-        try:
-            # Clean column names
-            pending_df.columns = pending_df.columns.str.strip()
-            
-            # Identify officer and task columns (adjust based on your sheet structure)
-            officer_col = [col for col in pending_df.columns if 'officer' in col.lower() or 'name' in col.lower()][0]
-            status_col = [col for col in pending_df.columns if 'status' in col.lower() or 'task' in col.lower()][0]
-            
-            # Filter pending tasks
-            pending_data = pending_df[pending_df[status_col].str.lower() == 'pending'].copy()
-            
-            # Group by officer and count tasks
-            officer_pending = pending_data.groupby(officer_col).size().reset_index(name='Pending Tasks')
-            officer_pending = officer_pending.sort_values('Pending Tasks', ascending=False)
-            
-            if len(officer_pending) > 0:
-                # Display as compact table
+    return summary
+
+# --- 2. Upcoming Court Cases ---
+def get_upcoming_cases(df):
+    """Filters court cases for the next 14 days."""
+    if df.empty:
+        return pd.DataFrame()
+
+    today = datetime.now().date()
+    end_date = today + timedelta(days=14)
+
+    # Convert 'hearing date' column to datetime, handling errors
+    try:
+        # Assuming the sheet uses 'Hearing Date' or similar, which is now 'hearing date'
+        df['hearing date'] = pd.to_datetime(df['hearing date'], errors='coerce', dayfirst=True)
+    except Exception:
+        # Fallback if 'hearing date' is not available
+        st.warning("Could not parse 'hearing date' column. Please check the date format in the sheet.")
+        return pd.DataFrame()
+
+    # Filter for upcoming cases (from today up to the next 14 days)
+    upcoming_df = df[
+        (df['hearing date'].dt.date >= today) &
+        (df['hearing date'].dt.date <= end_date)
+    ].copy()
+
+    # Select and format basic info
+    if not upcoming_df.empty:
+        upcoming_df['Hearing Date'] = upcoming_df['hearing date'].dt.strftime('%d-%b-%Y')
+        
+        # Selecting relevant columns based on typical GSheet column names (now lowercase)
+        # We assume 'case no.', 'party name', 'court' are the basic info columns
+        cols = ['case no.', 'party name', 'court']
+        # Filter for existing columns and map to display names
+        cols_to_display = {col: col.replace('.', '').title() for col in cols if col in upcoming_df.columns}
+        cols_to_display['Hearing Date'] = 'Hearing Date'
+        
+        # Ensure the required columns exist before selecting
+        final_cols = list(cols_to_display.keys())
+        upcoming_df = upcoming_df[[c for c in final_cols if c in upcoming_df.columns]].rename(columns=cols_to_display)
+        
+        return upcoming_df.sort_values(by='Hearing Date')
+    else:
+        return pd.DataFrame()
+
+# --- 3. Officer Performance (Star Mark Box) ---
+def get_officer_performance(df):
+    """Calculates completed and pending tasks for performance dashboard."""
+    if df.empty:
+        return pd.DataFrame({'Officer': ['N/A'], 'Completed (7 Days)': [0], 'Pending (Total)': [0]})
+
+    today = datetime.now().date()
+    start_date_7_days = today - timedelta(days=7)
+
+    # Ensure date columns are in datetime format
+    try:
+        # Assuming the sheet uses 'Completion Date' or similar, which is now 'completion date'
+        df['completion date'] = pd.to_datetime(df['completion date'], errors='coerce', dayfirst=True)
+    except Exception:
+        st.warning("Could not parse 'completion date' column. Performance metrics for 7 days may be inaccurate.")
+        df['completion date'] = pd.NaT
+
+    # Use lowercase column names: 'officer', 'status'
+    status_col = 'status'
+    officer_col = 'officer'
+    completion_date_col = 'completion date'
+
+    # 1. Completed in Last 7 Days
+    completed_7_days = df[
+        (df[status_col].astype(str).str.lower().str.strip() == 'complete') &
+        (df[completion_date_col].dt.date >= start_date_7_days) &
+        (df[completion_date_col].dt.date <= today)
+    ]
+    completed_counts = completed_7_days.groupby(officer_col).size().reset_index(name='Completed (7 Days)')
+
+    # 2. Total Pending Tasks
+    pending_tasks = df[df[status_col].astype(str).str.lower().str.strip() == 'pending']
+    pending_counts = pending_tasks.groupby(officer_col).size().reset_index(name='Pending (Total)')
+
+    # Merge results
+    performance_df = pd.merge(completed_counts, pending_counts, on=officer_col, how='outer').fillna(0)
+
+    # Get all unique officers (even those with 0 completed/pending)
+    all_officers = df[officer_col].dropna().unique()
+    all_officers_df = pd.DataFrame({officer_col: all_officers})
+
+    # Merge with all officers to ensure everyone is listed
+    performance_df = pd.merge(all_officers_df, performance_df, on=officer_col, how='left').fillna(0)
+
+    # Rename the officer column back for display
+    performance_df.rename(columns={officer_col: 'Officer'}, inplace=True)
+
+    # Ensure columns are integer types for clean display
+    performance_df['Completed (7 Days)'] = performance_df['Completed (7 Days)'].astype(int)
+    performance_df['Pending (Total)'] = performance_df['Pending (Total)'].astype(int)
+
+    return performance_df.sort_values(by='Completed (7 Days)', ascending=False)
+
+# --- Main Dashboard Layout ---
+def main_dashboard():
+    st.title("Executive Overview Dashboard")
+    st.markdown("---")
+
+    # --- 0. External Links (Using wide columns for efficient space use) ---
+    st.header("Quick Access Links")
+    link_col1, link_col2, link_col3 = st.columns(3)
+
+    link_col1.markdown(f"""
+        <div style="padding: 10px; border: 1px solid #4ade80; border-radius: 8px; background-color: #f0fdf4;">
+            <h3 style="margin-top:0; color:#15803d;">FCR Agenda</h3>
+            <p style="margin-bottom:0;"><a href='https://Fcragendaldh.streamlit.app/' target='_blank'>
+                Go to FCR Agenda App <span style='font-size:1.2em;'>➡️</span>
+            </a></p>
+        </div>
+        """, unsafe_allow_html=True)
+
+    link_col2.markdown(f"""
+        <div style="padding: 10px; border: 1px solid #93c5fd; border-radius: 8px; background-color: #eff6ff;">
+            <h3 style="margin-top:0; color:#2563eb;">Urban SVAMITRA</h3>
+            <p style="margin-bottom:0;"><a href='https://dashboardmcl.streamlit.app' target='_blank'>
+                Go to Urban SVAMITRA Dashboard <span style='font-size:1.2em;'>📊</span>
+            </a></p>
+        </div>
+        """, unsafe_allow_html=True)
+
+    # Placeholder for the third link or empty space
+    with link_col3:
+        st.empty()
+
+    st.markdown("---")
+    st.header("Data Overviews")
+    st.write("---")
+
+    # --- 1, 2, 3. Three Main Data Boxes (Using st.columns(3) for maximum space) ---
+    col_pending, col_court, col_performance = st.columns(3)
+
+    # --- Load all dataframes ---
+    df_pending = load_data(URL_PENDING)
+    df_court = load_data(URL_COURT_CASES)
+    df_performance_data = load_data(URL_PERFORMANCE)
+
+    # --- BOX 1: Pending Tasks Overview ---
+    with col_pending:
+        st.subheader("👤 Officer Pending Tasks")
+        pending_summary = get_pending_tasks_overview(df_pending)
+
+        # Display key metric (Total Pending)
+        total_pending = pending_summary['Pending Tasks'].sum()
+        st.metric(label="Total Pending Tasks Across All Officers", value=f"{total_pending}", delta_color="inverse")
+        st.markdown("**List of Officers with Pending Tasks:**")
+
+        # Check if the dataframe contains the required 'Officer' column after processing
+        if 'Officer' in pending_summary.columns and pending_summary['Pending Tasks'].sum() > 0:
+            st.dataframe(
+                pending_summary,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Officer": st.column_config.TextColumn("Officer", help="Name of the assigned officer"),
+                    "Pending Tasks": st.column_config.NumberColumn("Pending Tasks", help="Number of tasks with status 'Pending'", format="%d")
+                }
+            )
+        else:
+            st.info("🎉 Great job! No pending tasks found or data failed to load.")
+
+    # --- BOX 2: Upcoming Court Cases (Next 14 Days) ---
+    with col_court:
+        st.subheader("⚖️ Upcoming Court Cases (14 Days)")
+        upcoming_cases_df = get_upcoming_cases(df_court)
+
+        # Display key metric (Number of Upcoming Cases)
+        num_cases = len(upcoming_cases_df)
+        st.metric(label="Total Upcoming Cases (Next 14 Days)", value=f"{num_cases}", delta_color="off")
+        st.markdown("**Basic Info for Upcoming Cases:**")
+
+        if not upcoming_cases_df.empty:
+            # Check for the presence of the 'Hearing Date' column which is mandatory for display
+            if 'Hearing Date' in upcoming_cases_df.columns:
                 st.dataframe(
-                    officer_pending,
+                    upcoming_cases_df,
+                    use_container_width=True,
                     hide_index=True,
-                    height=300,
-                    use_container_width=True
+                    column_config={
+                        "Hearing Date": st.column_config.DateColumn("Hearing Date", format="DD-MMM-YYYY"),
+                    }
                 )
-                st.metric("Total Pending Tasks", pending_data.shape[0])
             else:
-                st.info("✅ No pending tasks!")
-        except Exception as e:
-            st.error(f"Error processing pending tasks: {str(e)}")
-    else:
-        st.warning("Unable to load pending tasks data")
+                 st.info("No court cases scheduled in the next 14 days, or column names are unexpected.")
+        else:
+            st.info("No court cases scheduled in the next 14 days.")
 
-# ============= COLUMN 2: UPCOMING COURT CASES =============
-with col2:
-    st.markdown("<div class='header-text'>⚖️ Upcoming Court Cases (14 Days)</div>", unsafe_allow_html=True)
-    
-    if court_df is not None:
-        try:
-            # Clean column names
-            court_df.columns = court_df.columns.str.strip()
-            
-            # Find date column
-            date_col = [col for col in court_df.columns if 'date' in col.lower() or 'hearing' in col.lower()][0]
-            
-            # Convert to datetime
-            court_df[date_col] = pd.to_datetime(court_df[date_col], errors='coerce')
-            
-            # Filter upcoming cases in next 14 days
-            today = datetime.now().date()
-            next_14_days = today + timedelta(days=14)
-            
-            upcoming = court_df[
-                (court_df[date_col].dt.date >= today) & 
-                (court_df[date_col].dt.date <= next_14_days)
-            ].copy()
-            
-            if len(upcoming) > 0:
-                # Select relevant columns to display
-                display_cols = [col for col in upcoming.columns if any(
-                    x in col.lower() for x in ['case', 'date', 'hearing', 'court', 'judge']
-                )][:4]  # Limit to 4 columns
-                
-                st.dataframe(
-                    upcoming[display_cols],
-                    hide_index=True,
-                    height=300,
-                    use_container_width=True
-                )
-                st.metric("Upcoming Cases", len(upcoming))
-            else:
-                st.info("📅 No cases scheduled in next 14 days")
-        except Exception as e:
-            st.error(f"Error processing court cases: {str(e)}")
-    else:
-        st.warning("Unable to load court cases data")
 
-# ============= COLUMN 3: OFFICER PERFORMANCE (7 DAYS) =============
-with col3:
-    st.markdown("<div class='header-text'>⭐ Officer Performance (Last 7 Days)</div>", unsafe_allow_html=True)
-    
-    if performance_df is not None:
-        try:
-            # Clean column names
-            performance_df.columns = performance_df.columns.str.strip()
-            
-            # Find relevant columns
-            officer_col = [col for col in performance_df.columns if 'officer' in col.lower() or 'name' in col.lower()][0]
-            
-            # Find completion columns
-            completed_col = [col for col in performance_df.columns if 'complet' in col.lower() or 'done' in col.lower()]
-            pending_col = [col for col in performance_df.columns if 'pending' in col.lower()]
-            
-            if completed_col and pending_col:
-                completed_col = completed_col[0]
-                pending_col = pending_col[0]
-                
-                # Create performance summary
-                perf_summary = performance_df[[officer_col, completed_col, pending_col]].copy()
-                perf_summary = perf_summary[perf_summary[completed_col] > 0].sort_values(completed_col, ascending=False)
-                
-                if len(perf_summary) > 0:
-                    st.dataframe(
-                        perf_summary,
-                        hide_index=True,
-                        height=300,
-                        use_container_width=True
-                    )
-                    st.metric("Top Performer", perf_summary.iloc[0][officer_col] if len(perf_summary) > 0 else "N/A")
-                else:
-                    st.info("No performance data available")
-            else:
-                st.warning("Could not identify completion/pending columns")
-        except Exception as e:
-            st.error(f"Error processing performance data: {str(e)}")
-    else:
-        st.warning("Unable to load performance data")
+    # --- BOX 3: Officer Performance (Star Mark Box) ---
+    with col_performance:
+        st.subheader("⭐ Officer Performance (Last 7 Days)")
+        performance_df = get_officer_performance(df_performance_data)
 
-# ============= BOTTOM ROW: EXTERNAL LINKS =============
-st.divider()
+        # Display key metric (Total Completed)
+        total_completed = performance_df['Completed (7 Days)'].sum()
+        st.metric(label="Total Tasks Completed (Last 7 Days)", value=f"{total_completed}", delta_color="normal")
+        st.markdown("**Performance Metrics:**")
 
-link_col1, link_col2 = st.columns(2, gap="small")
+        # Check if the dataframe contains the required 'Officer' column after processing
+        if 'Officer' in performance_df.columns:
+            st.dataframe(
+                performance_df,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Officer": st.column_config.TextColumn("Officer", help="Name of the officer"),
+                    "Completed (7 Days)": st.column_config.NumberColumn("Completed (7 Days)", help="Tasks completed in the last 7 days", format="%d"),
+                    "Pending (Total)": st.column_config.NumberColumn("Pending (Total)", help="Total tasks currently pending", format="%d")
+                }
+            )
+        else:
+            st.warning("Could not calculate performance data. Check sheet columns for 'Officer', 'Status', and 'Completion Date'.")
 
-with link_col1:
-    st.markdown("""
-    <a href="https://Fcragendaldh.streamlit.app/" target="_blank">
-        <button style="width: 100%; padding: 10px; background-color: #1f77b4; color: white; border: none; border-radius: 5px; cursor: pointer; font-weight: bold;">
-        📋 FCR Agenda
-        </button>
-    </a>
-    """, unsafe_allow_html=True)
 
-with link_col2:
-    st.markdown("""
-    <a href="https://dashboardmcl.streamlit.app" target="_blank">
-        <button style="width: 100%; padding: 10px; background-color: #2ca02c; color: white; border: none; border-radius: 5px; cursor: pointer; font-weight: bold;">
-        🏙️ Urban Swamitra
-        </button>
-    </a>
-    """, unsafe_allow_html=True)
-
-# ============= FOOTER =============
-st.markdown("""
-    <div style='text-align: center; padding: 1rem; color: #666; font-size: 12px;'>
-    Last updated: """ + datetime.now().strftime("%Y-%m-%d %H:%M:%S IST") + """
-    </div>
-""", unsafe_allow_html=True)
+if __name__ == "__main__":
+    main_dashboard()
